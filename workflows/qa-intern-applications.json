@@ -1,0 +1,1664 @@
+{
+  "name": "QA Intern Applications",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "New Application Email",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        304
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "subject:(Intern QA) has:attachment filename:pdf"
+        },
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xNrGPB0PkA7dwY6Q",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "id": "filter",
+      "name": "Is QA Intern Application with PDF",
+      "notes": "Gmail search is fuzzy, so re-check the subject exactly and make sure the first attachment is a PDF.",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        304
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ ($json.subject || '').toLowerCase() }}",
+              "rightValue": "^(?=.*intern)(?=.*(^|[^a-z])qa([^a-z]|$))",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $binary.attachment_0?.mimeType }}",
+              "rightValue": "application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      }
+    },
+    {
+      "id": "extract",
+      "name": "Read CV Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        304
+      ],
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "attachment_0",
+        "options": {
+          "joinPages": true,
+          "keepSource": "both"
+        }
+      }
+    },
+    {
+      "id": "ai",
+      "name": "Extract Applicant Details",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        672,
+        304
+      ],
+      "parameters": {
+        "text": "=CV text:\n{{ $json.text }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"full_name\": {\n      \"type\": \"string\",\n      \"description\": \"Applicant's full name\"\n    },\n    \"email\": {\n      \"type\": \"string\",\n      \"description\": \"Email address written in the CV\"\n    },\n    \"phone\": {\n      \"type\": \"string\",\n      \"description\": \"Mobile/phone number exactly as written, including country code if present\"\n    },\n    \"location\": {\n      \"type\": \"string\",\n      \"description\": \"City / country of residence\"\n    },\n    \"linkedin\": {\n      \"type\": \"string\",\n      \"description\": \"LinkedIn profile URL\"\n    },\n    \"education\": {\n      \"type\": \"string\",\n      \"description\": \"Highest or current qualification, institution and year, as one short line\"\n    },\n    \"skills\": {\n      \"type\": \"string\",\n      \"description\": \"Key technical skills, comma-separated\"\n    },\n    \"total_experience_years\": {\n      \"type\": \"number\",\n      \"description\": \"Total years of paid work experience of any kind (0 if none, decimals allowed)\"\n    },\n    \"has_relevant_experience\": {\n      \"type\": \"boolean\",\n      \"description\": \"true only if the applicant has held at least one job, internship, part-time or freelance role related to the position applied for\"\n    },\n    \"relevant_experience_details\": {\n      \"type\": \"string\",\n      \"description\": \"The relevant roles as 'Title @ Company (duration)', separated by '; '. Empty string if none.\"\n    },\n    \"summary\": {\n      \"type\": \"string\",\n      \"description\": \"Two-sentence summary of the candidate for a recruiter\"\n    }\n  },\n  \"required\": [\n    \"full_name\",\n    \"email\",\n    \"phone\",\n    \"has_relevant_experience\",\n    \"total_experience_years\",\n    \"summary\"\n  ]\n}",
+        "options": {
+          "systemPromptTemplate": "You are an expert recruiting assistant that extracts candidate details from CV text.\nOnly use information present in the CV. If a value is not in the CV, return an empty string (or 0 for numbers).\n\nDeciding has_relevant_experience (base this ONLY on the work history written in the CV):\n- The position is Intern QA Engineer.\n- Return true ONLY if the CV lists at least one real job, internship, part-time or freelance role related to that position. For a QA Engineer role this means software quality assurance, software testing (manual or automated), test automation, or software development roles that clearly involved testing.\n- University/academic projects, coursework, certifications, hackathons and unrelated jobs (e.g. retail, hospitality) do NOT count."
+        }
+      }
+    },
+    {
+      "id": "model",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        672,
+        528
+      ],
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "Fy6pZqnMxx76q7wH",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "name": "Combine CV and Details",
+      "notes": "The AI node drops the PDF, so recombine its output with the CV file by position.",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        912,
+        304
+      ],
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      }
+    },
+    {
+      "id": "if",
+      "name": "Has Relevant Experience?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        304
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{ $json.output.has_relevant_experience }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "upload-cv-to-experienced-folder",
+      "name": "Upload CV to Experienced Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "inputDataFieldName": "attachment_0",
+        "name": "={{ ($json.output.full_name || 'Unknown Applicant') + ' - CV.pdf' }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1VT3RDAb3d25tJ22qDWRxeL48X5aotYL-",
+          "mode": "list",
+          "cachedResultName": "Application Manager",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1VT3RDAb3d25tJ22qDWRxeL48X5aotYL-"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "d4hFquEflvGtE2kk",
+          "name": "Google Drive account 2"
+        }
+      }
+    },
+    {
+      "id": "upload-cv-to-freshers-folder",
+      "name": "Upload CV to Freshers Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1344,
+        432
+      ],
+      "parameters": {
+        "inputDataFieldName": "attachment_0",
+        "name": "={{ ($json.output.full_name || 'Unknown Applicant') + ' - CV.pdf' }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1VT3RDAb3d25tJ22qDWRxeL48X5aotYL-",
+          "mode": "list",
+          "cachedResultName": "Application Manager",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1VT3RDAb3d25tJ22qDWRxeL48X5aotYL-"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "d4hFquEflvGtE2kk",
+          "name": "Google Drive account 2"
+        }
+      }
+    },
+    {
+      "id": "add-to-experienced-sheet",
+      "name": "Add to Experienced Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1mrGiT4BQjF6FWEZT0ddOAcd9XypQHacsK4s3cJyT03o",
+          "mode": "list",
+          "cachedResultName": "QA Intern - Experienced Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1mrGiT4BQjF6FWEZT0ddOAcd9XypQHacsK4s3cJyT03o/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1mrGiT4BQjF6FWEZT0ddOAcd9XypQHacsK4s3cJyT03o/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date Received": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "Full Name": "={{ $('Combine CV and Details').item.json.output.full_name }}",
+            "Email": "={{ $('Combine CV and Details').item.json.output.email }}",
+            "Phone": "={{ $('Combine CV and Details').item.json.output.phone }}",
+            "Location": "={{ $('Combine CV and Details').item.json.output.location }}",
+            "LinkedIn": "={{ $('Combine CV and Details').item.json.output.linkedin }}",
+            "Education": "={{ $('Combine CV and Details').item.json.output.education }}",
+            "Skills": "={{ $('Combine CV and Details').item.json.output.skills }}",
+            "Relevant Experience": "={{ $('Combine CV and Details').item.json.output.relevant_experience_details }}",
+            "Total Experience (Years)": "={{ $('Combine CV and Details').item.json.output.total_experience_years }}",
+            "Summary": "={{ $('Combine CV and Details').item.json.output.summary }}",
+            "CV Link": "={{ 'https://drive.google.com/file/d/' + $json.id + '/view' }}",
+            "Gmail Message ID": "={{ $('Combine CV and Details').item.json.id }}",
+            "Status": "Pending",
+            "Rejection Email Sent": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date Received",
+              "displayName": "Date Received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Full Name",
+              "displayName": "Full Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "LinkedIn",
+              "displayName": "LinkedIn",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Education",
+              "displayName": "Education",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Skills",
+              "displayName": "Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Relevant Experience",
+              "displayName": "Relevant Experience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Experience (Years)",
+              "displayName": "Total Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CV Link",
+              "displayName": "CV Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Gmail Message ID",
+              "displayName": "Gmail Message ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Rejection Email Sent",
+              "displayName": "Rejection Email Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "l0e6n7cTS9ITdOvt",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "id": "add-to-freshers-sheet",
+      "name": "Add to Freshers Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1568,
+        432
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "14l9Q8xWTeJIVRWAolXybGKMVpJtWqcpqzhWiKoHm1NI",
+          "mode": "list",
+          "cachedResultName": "QA Intern - Fresher Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14l9Q8xWTeJIVRWAolXybGKMVpJtWqcpqzhWiKoHm1NI/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14l9Q8xWTeJIVRWAolXybGKMVpJtWqcpqzhWiKoHm1NI/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date Received": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "Full Name": "={{ $('Combine CV and Details').item.json.output.full_name }}",
+            "Email": "={{ $('Combine CV and Details').item.json.output.email }}",
+            "Phone": "={{ $('Combine CV and Details').item.json.output.phone }}",
+            "Location": "={{ $('Combine CV and Details').item.json.output.location }}",
+            "LinkedIn": "={{ $('Combine CV and Details').item.json.output.linkedin }}",
+            "Education": "={{ $('Combine CV and Details').item.json.output.education }}",
+            "Skills": "={{ $('Combine CV and Details').item.json.output.skills }}",
+            "Relevant Experience": "={{ $('Combine CV and Details').item.json.output.relevant_experience_details }}",
+            "Total Experience (Years)": "={{ $('Combine CV and Details').item.json.output.total_experience_years }}",
+            "Summary": "={{ $('Combine CV and Details').item.json.output.summary }}",
+            "CV Link": "={{ 'https://drive.google.com/file/d/' + $json.id + '/view' }}",
+            "Gmail Message ID": "={{ $('Combine CV and Details').item.json.id }}",
+            "Status": "Pending",
+            "Rejection Email Sent": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date Received",
+              "displayName": "Date Received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Full Name",
+              "displayName": "Full Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "LinkedIn",
+              "displayName": "LinkedIn",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Education",
+              "displayName": "Education",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Skills",
+              "displayName": "Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Relevant Experience",
+              "displayName": "Relevant Experience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Experience (Years)",
+              "displayName": "Total Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CV Link",
+              "displayName": "CV Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Gmail Message ID",
+              "displayName": "Gmail Message ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Rejection Email Sent",
+              "displayName": "Rejection Email Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "l0e6n7cTS9ITdOvt",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "id": "rej-sched",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        1000
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rej-r-Experienced",
+      "name": "Get Rejected Experienced",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        224,
+        880
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1mrGiT4BQjF6FWEZT0ddOAcd9XypQHacsK4s3cJyT03o"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1mrGiT4BQjF6FWEZT0ddOAcd9XypQHacsK4s3cJyT03o/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Status",
+              "lookupValue": "Rejected"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "l0e6n7cTS9ITdOvt",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "id": "rej-f-Experienced",
+      "name": "Not Yet Emailed (Experienced)",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        880
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "n1",
+              "leftValue": "={{ $json['Rejection Email Sent'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "n2",
+              "leftValue": "={{ $json['Gmail Message ID'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "rej-s-Experienced",
+      "name": "Send Rejection Email (Experienced)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        912,
+        880
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "reply",
+        "messageId": "={{ $('Not Yet Emailed (Experienced)').item.json['Gmail Message ID'] }}",
+        "emailType": "text",
+        "message": "={{ $json.text.trim() }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xNrGPB0PkA7dwY6Q",
+          "name": "Gmail account 2"
+        }
+      },
+      "webhookId": "00224419-0b7e-4648-a52f-5ff1c41c782d"
+    },
+    {
+      "id": "rej-m-Experienced",
+      "name": "Mark Rejection Sent (Experienced)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1120,
+        880
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1mrGiT4BQjF6FWEZT0ddOAcd9XypQHacsK4s3cJyT03o"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1mrGiT4BQjF6FWEZT0ddOAcd9XypQHacsK4s3cJyT03o/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "Gmail Message ID"
+          ],
+          "schema": [
+            {
+              "id": "Date Received",
+              "displayName": "Date Received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Full Name",
+              "displayName": "Full Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "LinkedIn",
+              "displayName": "LinkedIn",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Education",
+              "displayName": "Education",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Skills",
+              "displayName": "Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Relevant Experience",
+              "displayName": "Relevant Experience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Experience (Years)",
+              "displayName": "Total Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CV Link",
+              "displayName": "CV Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Gmail Message ID",
+              "displayName": "Gmail Message ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Rejection Email Sent",
+              "displayName": "Rejection Email Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "Gmail Message ID": "={{ $('Not Yet Emailed (Experienced)').item.json['Gmail Message ID'] }}",
+            "Rejection Email Sent": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "l0e6n7cTS9ITdOvt",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "id": "rej-r-Freshers",
+      "name": "Get Rejected Freshers",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        224,
+        1200
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "14l9Q8xWTeJIVRWAolXybGKMVpJtWqcpqzhWiKoHm1NI"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14l9Q8xWTeJIVRWAolXybGKMVpJtWqcpqzhWiKoHm1NI/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Status",
+              "lookupValue": "Rejected"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "l0e6n7cTS9ITdOvt",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "id": "rej-f-Freshers",
+      "name": "Not Yet Emailed (Freshers)",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        1200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "n1",
+              "leftValue": "={{ $json['Rejection Email Sent'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "n2",
+              "leftValue": "={{ $json['Gmail Message ID'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "rej-s-Freshers",
+      "name": "Send Rejection Email (Freshers)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        912,
+        1200
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "reply",
+        "messageId": "={{ $('Not Yet Emailed (Freshers)').item.json['Gmail Message ID'] }}",
+        "emailType": "text",
+        "message": "={{ $json.text.trim() }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xNrGPB0PkA7dwY6Q",
+          "name": "Gmail account 2"
+        }
+      },
+      "webhookId": "33181dc0-6ae5-4bb5-b7ef-6c3a524ecb69"
+    },
+    {
+      "id": "rej-m-Freshers",
+      "name": "Mark Rejection Sent (Freshers)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1120,
+        1200
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "14l9Q8xWTeJIVRWAolXybGKMVpJtWqcpqzhWiKoHm1NI"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Applicants",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14l9Q8xWTeJIVRWAolXybGKMVpJtWqcpqzhWiKoHm1NI/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "Gmail Message ID"
+          ],
+          "schema": [
+            {
+              "id": "Date Received",
+              "displayName": "Date Received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Full Name",
+              "displayName": "Full Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "LinkedIn",
+              "displayName": "LinkedIn",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Education",
+              "displayName": "Education",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Skills",
+              "displayName": "Skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Relevant Experience",
+              "displayName": "Relevant Experience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Experience (Years)",
+              "displayName": "Total Experience (Years)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CV Link",
+              "displayName": "CV Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Gmail Message ID",
+              "displayName": "Gmail Message ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Rejection Email Sent",
+              "displayName": "Rejection Email Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "Gmail Message ID": "={{ $('Not Yet Emailed (Freshers)').item.json['Gmail Message ID'] }}",
+            "Rejection Email Sent": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}"
+          },
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "l0e6n7cTS9ITdOvt",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "id": "rej-w-Experienced",
+      "name": "Write Rejection Email (Experienced)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        672,
+        880
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Applicant profile (experienced applicant):\nFull name: {{ $json['Full Name'] }}\nEducation: {{ $json['Education'] }}\nSkills: {{ $json['Skills'] }}\nRelevant experience: {{ $json['Relevant Experience'] || 'None listed' }}\nTotal experience (years): {{ $json['Total Experience (Years)'] }}\nRecruiter summary: {{ $json['Summary'] }}",
+        "hasOutputParser": false,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You write rejection emails for the Hiring Team about the Intern QA Engineer position.\n\nWrite ONE short, warm, professional email body (120-170 words) to the applicant described in the user message.\n- Start with \"Hi <first name>,\" using only their first name.\n- Thank them for applying for the Intern QA Engineer position.\n- Mention one or two genuine, specific strengths from their profile (skills, education or experience) so it clearly reads as written for them. Only use facts given to you; never invent anything.\n- Say clearly but kindly that we will not be moving forward with their application at this time.\n- Do NOT give a reason for the decision, do NOT criticise, and do NOT promise future interviews or jobs.\n- Encourage them to apply for future openings and wish them well.\n- End with exactly:\nBest regards,\nHiring Team\n\nOutput plain text only: no subject line, no markdown, no placeholders like [Name], nothing before \"Hi\" and nothing after \"Hiring Team\"."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rej-m-model-Experienced",
+      "name": "Rejection Writer Model (Experienced)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        672,
+        1040
+      ],
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "Fy6pZqnMxx76q7wH",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "id": "rej-w-Freshers",
+      "name": "Write Rejection Email (Freshers)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        672,
+        1200
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Applicant profile (fresher applicant):\nFull name: {{ $json['Full Name'] }}\nEducation: {{ $json['Education'] }}\nSkills: {{ $json['Skills'] }}\nRelevant experience: {{ $json['Relevant Experience'] || 'None listed' }}\nTotal experience (years): {{ $json['Total Experience (Years)'] }}\nRecruiter summary: {{ $json['Summary'] }}",
+        "hasOutputParser": false,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You write rejection emails for the Hiring Team about the Intern QA Engineer position.\n\nWrite ONE short, warm, professional email body (120-170 words) to the applicant described in the user message.\n- Start with \"Hi <first name>,\" using only their first name.\n- Thank them for applying for the Intern QA Engineer position.\n- Mention one or two genuine, specific strengths from their profile (skills, education or experience) so it clearly reads as written for them. Only use facts given to you; never invent anything.\n- Say clearly but kindly that we will not be moving forward with their application at this time.\n- Do NOT give a reason for the decision, do NOT criticise, and do NOT promise future interviews or jobs.\n- Encourage them to apply for future openings and wish them well.\n- End with exactly:\nBest regards,\nHiring Team\n\nOutput plain text only: no subject line, no markdown, no placeholders like [Name], nothing before \"Hi\" and nothing after \"Hiring Team\"."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rej-m-model-Freshers",
+      "name": "Rejection Writer Model (Freshers)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        672,
+        1360
+      ],
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "Fy6pZqnMxx76q7wH",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "id": "Note: New Applications",
+      "name": "Note: New Applications",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        0
+      ],
+      "parameters": {
+        "content": "## 1. New applications\nEvery minute: email with \"Intern\" + \"QA\" in the subject and a PDF CV → AI reads the CV → sorted by relevant QA experience → CV saved to Drive → row added to the Experienced or Freshers sheet (Status = Pending).",
+        "width": 1860,
+        "height": 680,
+        "color": 4
+      }
+    },
+    {
+      "id": "Note: Rejection Emails",
+      "name": "Note: Rejection Emails",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        720
+      ],
+      "parameters": {
+        "content": "## 2. Rejection emails\nEvery 15 minutes: rows with Status = **Rejected** and an empty \"Rejection Email Sent\" → AI writes a personalised rejection → replied in the applicant's email thread → row stamped so nobody is emailed twice.",
+        "width": 1860,
+        "height": 820,
+        "color": 3
+      }
+    }
+  ],
+  "connections": {
+    "New Application Email": {
+      "main": [
+        [
+          {
+            "node": "Is QA Intern Application with PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is QA Intern Application with PDF": {
+      "main": [
+        [
+          {
+            "node": "Read CV Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CV Text": {
+      "main": [
+        [
+          {
+            "node": "Extract Applicant Details",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Combine CV and Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Applicant Details": {
+      "main": [
+        [
+          {
+            "node": "Combine CV and Details",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Applicant Details",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine CV and Details": {
+      "main": [
+        [
+          {
+            "node": "Has Relevant Experience?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Relevant Experience?": {
+      "main": [
+        [
+          {
+            "node": "Upload CV to Experienced Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upload CV to Freshers Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload CV to Experienced Folder": {
+      "main": [
+        [
+          {
+            "node": "Add to Experienced Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload CV to Freshers Folder": {
+      "main": [
+        [
+          {
+            "node": "Add to Freshers Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get Rejected Experienced",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Rejected Freshers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Rejected Experienced": {
+      "main": [
+        [
+          {
+            "node": "Not Yet Emailed (Experienced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Rejection Email (Experienced)": {
+      "main": [
+        [
+          {
+            "node": "Mark Rejection Sent (Experienced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Rejected Freshers": {
+      "main": [
+        [
+          {
+            "node": "Not Yet Emailed (Freshers)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Rejection Email (Freshers)": {
+      "main": [
+        [
+          {
+            "node": "Mark Rejection Sent (Freshers)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Yet Emailed (Experienced)": {
+      "main": [
+        [
+          {
+            "node": "Write Rejection Email (Experienced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Rejection Email (Experienced)": {
+      "main": [
+        [
+          {
+            "node": "Send Rejection Email (Experienced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rejection Writer Model (Experienced)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Rejection Email (Experienced)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Yet Emailed (Freshers)": {
+      "main": [
+        [
+          {
+            "node": "Write Rejection Email (Freshers)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Rejection Email (Freshers)": {
+      "main": [
+        [
+          {
+            "node": "Send Rejection Email (Freshers)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rejection Writer Model (Freshers)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Rejection Email (Freshers)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}
